@@ -57,12 +57,13 @@ jobs:
           AR: llvm-ar-21
           RANLIB: llvm-ranlib-21
           LD: ld.lld-21
+          CXXFLAGS: -Wno-error=undefined-var-template
         run: |
           set -o pipefail
           clang-21 --version
           ld.lld-21 --version
           bun --version
-          bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=OFF -B build/release 2>&1 | tee /tmp/build.log
+          bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=OFF -DCMAKE_CXX_FLAGS=-Wno-error=undefined-var-template -B build/release 2>&1 | tee /tmp/build.log
           build_status=${PIPESTATUS[0]}
           {
             echo "### Build status: ${build_status}"
