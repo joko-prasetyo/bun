@@ -75,37 +75,6 @@ jobs:
           [[ ${build_status} -eq 0 ]]
           ./build/release/bun --version
 
-      - name: Verify Tokopedia TLS Behavior
-        if: success()
-        run: |
-          cat >/tmp/test-tls.js <<'EOF'
-          async function test() {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 15000);
-            const started = Date.now();
-            try {
-              const res = await fetch('https://gql.tokopedia.com', {
-                method: 'POST',
-                headers: {
-                  'content-type': 'application/json',
-                  'x-tkpd-akamai': 'x',
-                  'origin': 'https://m.tokopedia.com',
-                  'user-agent': 'Mozilla/5.0 Chrome/120.0.0.0',
-                },
-                body: JSON.stringify({ query: '{ shop(id:1) { name } }' }),
-                signal: controller.signal,
-              });
-              console.log('OK', res.status, Date.now() - started + 'ms');
-            } catch (e) {
-              console.log('FAIL', e.name, Date.now() - started + 'ms', e.message || '');
-            } finally {
-              clearTimeout(timeout);
-            }
-          }
-          test();
-          EOF
-          ./build/release/bun /tmp/test-tls.js | tee /tmp/tls-result.txt
-
       - name: Package Linux Installer
         if: success()
         run: |
@@ -140,7 +109,6 @@ jobs:
           path: |
             build/release/bun
             /tmp/build-linux.log
-            /tmp/tls-result.txt
             /tmp/bun-linux-x64-installer.tar.gz
             /tmp/bun-linux-x64-installer.zip
 
