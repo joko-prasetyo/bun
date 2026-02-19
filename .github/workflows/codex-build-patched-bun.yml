@@ -7,11 +7,9 @@ on:
       - codex/tls-boringssl-rollback
 
 jobs:
-  build-and-test:
+  build-linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    env:
-      BUN_VERSION: 1.3.9
+    timeout-minutes: 180
     defaults:
       run:
         shell: bash
@@ -66,12 +64,12 @@ jobs:
           clang-21 --version
           ld.lld-21 --version
           bun --version
-          bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=OFF -DCMAKE_CXX_FLAGS=-Wno-error=undefined-var-template -B build/release 2>&1 | tee /tmp/build.log
+          bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=OFF -DCMAKE_CXX_FLAGS=-Wno-error=undefined-var-template -B build/release 2>&1 | tee /tmp/build-linux.log
           build_status=${PIPESTATUS[0]}
           {
             echo "### Build status: ${build_status}"
             echo '```'
-            tail -n 200 /tmp/build.log || true
+            tail -n 200 /tmp/build-linux.log || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           [[ ${build_status} -eq 0 ]]
@@ -108,69 +106,184 @@ jobs:
           EOF
           ./build/release/bun /tmp/test-tls.js | tee /tmp/tls-result.txt
 
-      - name: Package Installer Bundle
+      - name: Package Linux Installer
         if: success()
         run: |
           set -euxo pipefail
           mkdir -p /tmp/bun-installer-linux-x64/bin
           cp build/release/bun /tmp/bun-installer-linux-x64/bin/bun
           ln -sf bun /tmp/bun-installer-linux-x64/bin/bunx
-
           cat >/tmp/bun-installer-linux-x64/install.sh <<'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
-
           SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
           BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
           BIN_DIR="$BUN_INSTALL/bin"
-
           mkdir -p "$BIN_DIR"
           install -m 755 "$SCRIPT_DIR/bin/bun" "$BIN_DIR/bun"
           ln -sf "$BIN_DIR/bun" "$BIN_DIR/bunx"
-
           echo "Installed Bun to $BIN_DIR"
-          echo "Add this to your shell profile:"
-          echo "export BUN_INSTALL=\"\$HOME/.bun\""
-          echo "export PATH=\"\$BUN_INSTALL/bin:\$PATH\""
           EOF
           chmod +x /tmp/bun-installer-linux-x64/install.sh
-
           (
             cd /tmp
             tar -czf bun-linux-x64-installer.tar.gz bun-installer-linux-x64
             zip -rq bun-linux-x64-installer.zip bun-installer-linux-x64
           )
 
-      - name: Download Official Installers (Linux/macOS/Windows)
-        if: always()
-        run: |
-          set -euxo pipefail
-          mkdir -p /tmp/official-installers
-          BASE_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}"
-          for ASSET in \
-            bun-linux-x64.zip \
-            bun-linux-aarch64.zip \
-            bun-darwin-x64.zip \
-            bun-darwin-aarch64.zip \
-            bun-windows-x64.zip
-          do
-            curl -fL "${BASE_URL}/${ASSET}" -o "/tmp/official-installers/${ASSET}"
-          done
-
-      - name: Upload Artifacts
+      - name: Upload Linux Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bun-release-and-tls-log
+          name: bun-installer-linux-x64
           if-no-files-found: warn
           path: |
             build/release/bun
-            /tmp/build.log
+            /tmp/build-linux.log
             /tmp/tls-result.txt
             /tmp/bun-linux-x64-installer.tar.gz
             /tmp/bun-linux-x64-installer.zip
-            /tmp/official-installers/bun-linux-x64.zip
-            /tmp/official-installers/bun-linux-aarch64.zip
-            /tmp/official-installers/bun-darwin-x64.zip
-            /tmp/official-installers/bun-darwin-aarch64.zip
-            /tmp/official-installers/bun-windows-x64.zip
+
+  build-macos:
+    runs-on: macos-14
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Install Build Dependencies
+        run: |
+          brew update
+          brew install automake ccache cmake coreutils gnu-sed go libtool ninja pkg-config rust ruby llvm@21
+
+      - name: Install JS Dependencies
+        run: |
+          bun --version
+          bun install --frozen-lockfile
+
+      - name: Build Bun (Release)
+        run: |
+          set -o pipefail
+          LLVM_PREFIX="$(brew --prefix llvm@21)"
+          export PATH="$LLVM_PREFIX/bin:$PATH"
+          export CC=clang
+          export CXX=clang++
+          export AR=llvm-ar
+          export RANLIB=llvm-ranlib
+          export CXXFLAGS="-Wno-error=undefined-var-template"
+          clang --version
+          bun --version
+          bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=OFF -DCMAKE_CXX_FLAGS=-Wno-error=undefined-var-template -B build/release 2>&1 | tee /tmp/build-macos.log
+          build_status=${PIPESTATUS[0]}
+          {
+            echo "### Build status: ${build_status}"
+            echo '```'
+            tail -n 200 /tmp/build-macos.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ ${build_status} -eq 0 ]]
+          ./build/release/bun --version
+
+      - name: Package macOS Installer
+        if: success()
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/bun-installer-darwin-aarch64/bin
+          cp build/release/bun /tmp/bun-installer-darwin-aarch64/bin/bun
+          ln -sf bun /tmp/bun-installer-darwin-aarch64/bin/bunx
+          cat >/tmp/bun-installer-darwin-aarch64/install.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+          BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+          BIN_DIR="$BUN_INSTALL/bin"
+          mkdir -p "$BIN_DIR"
+          install -m 755 "$SCRIPT_DIR/bin/bun" "$BIN_DIR/bun"
+          ln -sf "$BIN_DIR/bun" "$BIN_DIR/bunx"
+          echo "Installed Bun to $BIN_DIR"
+          EOF
+          chmod +x /tmp/bun-installer-darwin-aarch64/install.sh
+          (
+            cd /tmp
+            tar -czf bun-darwin-aarch64-installer.tar.gz bun-installer-darwin-aarch64
+            zip -rq bun-darwin-aarch64-installer.zip bun-installer-darwin-aarch64
+          )
+
+      - name: Upload macOS Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-installer-darwin-aarch64
+          if-no-files-found: warn
+          path: |
+            build/release/bun
+            /tmp/build-macos.log
+            /tmp/bun-darwin-aarch64-installer.tar.gz
+            /tmp/bun-darwin-aarch64-installer.zip
+
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Bootstrap Build Dependencies
+        run: |
+          ./scripts/bootstrap.ps1 -CI
+
+      - name: Install JS Dependencies
+        run: |
+          bun --version
+          bun install --frozen-lockfile
+
+      - name: Build Bun (Release)
+        run: |
+          bun --version
+          bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=OFF -B build/release 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\build-windows.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/release/bun.exe --version
+
+      - name: Package Windows Installer
+        if: success()
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\bun-installer-windows-x64\bin" | Out-Null
+          Copy-Item -Path "build/release/bun.exe" -Destination "$env:RUNNER_TEMP\bun-installer-windows-x64\bin\bun.exe" -Force
+          Copy-Item -Path "build/release/bun.exe" -Destination "$env:RUNNER_TEMP\bun-installer-windows-x64\bin\bunx.exe" -Force
+          @'
+          $ErrorActionPreference = "Stop"
+          $BUN_INSTALL = if ($env:BUN_INSTALL) { $env:BUN_INSTALL } else { "$env:USERPROFILE\.bun" }
+          $BinDir = Join-Path $BUN_INSTALL "bin"
+          New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+          Copy-Item -Path (Join-Path $PSScriptRoot "bin\bun.exe") -Destination (Join-Path $BinDir "bun.exe") -Force
+          Copy-Item -Path (Join-Path $PSScriptRoot "bin\bunx.exe") -Destination (Join-Path $BinDir "bunx.exe") -Force
+          Write-Host "Installed Bun to $BinDir"
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\bun-installer-windows-x64\install.ps1" -Encoding ASCII
+          Compress-Archive -Path "$env:RUNNER_TEMP\bun-installer-windows-x64\*" -DestinationPath "$env:RUNNER_TEMP\bun-windows-x64-installer.zip" -Force
+
+      - name: Upload Windows Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-installer-windows-x64
+          if-no-files-found: warn
+          path: |
+            build/release/bun.exe
+            ${{ runner.temp }}/build-windows.log
+            ${{ runner.temp }}/bun-windows-x64-installer.zip
