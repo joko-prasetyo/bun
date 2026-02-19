@@ -10,6 +10,9 @@ jobs:
   build-and-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,27 +31,50 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get install -y \
+            ccache \
             cargo \
             cmake \
             git \
             golang \
             libtool \
+            lld-21 \
             ninja-build \
             pkg-config \
             rustc \
             ruby-full \
+            llvm-21-tools \
             xz-utils
+
+      - name: Install JS Dependencies
+        run: |
+          bun --version
+          bun install --frozen-lockfile
 
       - name: Build Bun (Release)
         env:
           CC: clang-21
           CXX: clang++-21
+          AR: llvm-ar-21
+          RANLIB: llvm-ranlib-21
+          LD: ld.lld-21
         run: |
+          set -o pipefail
+          clang-21 --version
+          ld.lld-21 --version
           bun --version
-          bun run build:release
+          bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=OFF -B build/release 2>&1 | tee /tmp/build.log
+          build_status=${PIPESTATUS[0]}
+          {
+            echo "### Build status: ${build_status}"
+            echo '```'
+            tail -n 200 /tmp/build.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ ${build_status} -eq 0 ]]
           ./build/release/bun --version
 
       - name: Verify Tokopedia TLS Behavior
+        if: success()
         run: |
           cat >/tmp/test-tls.js <<'EOF'
           async function test() {
@@ -79,9 +105,12 @@ jobs:
           ./build/release/bun /tmp/test-tls.js | tee /tmp/tls-result.txt
 
       - name: Upload Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bun-release-and-tls-log
+          if-no-files-found: warn
           path: |
             build/release/bun
+            /tmp/build.log
             /tmp/tls-result.txt
