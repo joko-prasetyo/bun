@@ -43,7 +43,8 @@ jobs:
             rustc \
             ruby-full \
             llvm-21-tools \
-            xz-utils
+            xz-utils \
+            zip
 
       - name: Install JS Dependencies
         run: |
@@ -105,6 +106,39 @@ jobs:
           EOF
           ./build/release/bun /tmp/test-tls.js | tee /tmp/tls-result.txt
 
+      - name: Package Installer Bundle
+        if: success()
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/bun-installer-linux-x64/bin
+          cp build/release/bun /tmp/bun-installer-linux-x64/bin/bun
+          ln -sf bun /tmp/bun-installer-linux-x64/bin/bunx
+
+          cat >/tmp/bun-installer-linux-x64/install.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+          BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+          BIN_DIR="$BUN_INSTALL/bin"
+
+          mkdir -p "$BIN_DIR"
+          install -m 755 "$SCRIPT_DIR/bin/bun" "$BIN_DIR/bun"
+          ln -sf "$BIN_DIR/bun" "$BIN_DIR/bunx"
+
+          echo "Installed Bun to $BIN_DIR"
+          echo "Add this to your shell profile:"
+          echo "export BUN_INSTALL=\"\$HOME/.bun\""
+          echo "export PATH=\"\$BUN_INSTALL/bin:\$PATH\""
+          EOF
+          chmod +x /tmp/bun-installer-linux-x64/install.sh
+
+          (
+            cd /tmp
+            tar -czf bun-linux-x64-installer.tar.gz bun-installer-linux-x64
+            zip -rq bun-linux-x64-installer.zip bun-installer-linux-x64
+          )
+
       - name: Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -115,3 +149,5 @@ jobs:
             build/release/bun
             /tmp/build.log
             /tmp/tls-result.txt
+            /tmp/bun-linux-x64-installer.tar.gz
+            /tmp/bun-linux-x64-installer.zip
