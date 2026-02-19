@@ -1,0 +1,87 @@
+name: codex-build-patched-bun
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/tls-boringssl-rollback
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+
+      - name: Install LLVM 21
+        run: |
+          sudo apt-get update
+          wget https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
+          sudo bash /tmp/llvm.sh 21 all
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get install -y \
+            cargo \
+            cmake \
+            git \
+            golang \
+            libtool \
+            ninja-build \
+            pkg-config \
+            rustc \
+            ruby-full \
+            xz-utils
+
+      - name: Build Bun (Release)
+        env:
+          CC: clang-21
+          CXX: clang++-21
+        run: |
+          bun --version
+          bun run build:release
+          ./build/release/bun --version
+
+      - name: Verify Tokopedia TLS Behavior
+        run: |
+          cat >/tmp/test-tls.js <<'EOF'
+          async function test() {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15000);
+            const started = Date.now();
+            try {
+              const res = await fetch('https://gql.tokopedia.com', {
+                method: 'POST',
+                headers: {
+                  'content-type': 'application/json',
+                  'x-tkpd-akamai': 'x',
+                  'origin': 'https://m.tokopedia.com',
+                  'user-agent': 'Mozilla/5.0 Chrome/120.0.0.0',
+                },
+                body: JSON.stringify({ query: '{ shop(id:1) { name } }' }),
+                signal: controller.signal,
+              });
+              console.log('OK', res.status, Date.now() - started + 'ms');
+            } catch (e) {
+              console.log('FAIL', e.name, Date.now() - started + 'ms', e.message || '');
+            } finally {
+              clearTimeout(timeout);
+            }
+          }
+          test();
+          EOF
+          ./build/release/bun /tmp/test-tls.js | tee /tmp/tls-result.txt
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-release-and-tls-log
+          path: |
+            build/release/bun
+            /tmp/tls-result.txt
