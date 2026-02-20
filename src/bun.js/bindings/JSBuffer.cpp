@@ -2465,6 +2465,7 @@ class JSBuffer : public JSC::JSNonFinalObject {
     static constexpr JSC::JSTypeRange typeRange = { Uint8ArrayType, Uint8ArrayType };
 };
 
+IGNORE_WARNINGS_BEGIN("undefined-var-template")
 const ClassInfo JSBuffer::s_info = {
     "Buffer"_s,
     &JSC::JSUint8Array::s_info,
@@ -2472,6 +2473,7 @@ const ClassInfo JSBuffer::s_info = {
     nullptr,
     CREATE_METHOD_TABLE(JSBuffer)
 };
+IGNORE_WARNINGS_END
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_compare, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
